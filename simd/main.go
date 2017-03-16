@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	_ "net/http/pprof"
+	"net/url"
 	"os"
 	"os/signal"
 	"runtime"
@@ -89,6 +90,27 @@ func main() {
 		http.HandleFunc("/topk", func(w http.ResponseWriter, r *http.Request) { topkHandler(w, r) })
 	}
 
+	http.HandleFunc("/reload", func(w http.ResponseWriter, r *http.Request) {
+		log.Println("reloading...")
+
+		inputUrl := r.FormValue("input")
+		_, err := url.ParseRequestURI(inputUrl)
+		if err == nil {
+			reloadConfigFromRemote(inputUrl, *input)
+		} else {
+			log.Println("invalid input URL: ", err)
+		}
+
+		status := http.StatusOK
+		err = loadConfig(*input, *useStore, *storeSize, *small, *compressed, *useVPTree, *myNumber, *totalMachines)
+		if err != nil {
+			log.Println("reload failed: ignoring:", err)
+			status = http.StatusInternalServerError
+		}
+
+		w.WriteHeader(status)
+	})
+
 	if envhost := os.Getenv("GRAPHITEHOST") + ":" + os.Getenv("GRAPHITEPORT"); envhost != ":" || *graphiteHost != "" {
 		if *graphiteNamespace == "" {
 			*graphiteNamespace = "general.simstore"
@@ -131,6 +153,37 @@ func main() {
 
 	log.Println("listening on port", *port)
 	log.Fatal(http.ListenAndServe(":"+strconv.Itoa(*port), nil))
+}
+
+// writes the input config file from a remote url endpoint
+// supplied as a url query parameter to /reload
+func reloadConfigFromRemote(inputUrl string, configPath string) {
+	log.Printf("> reloading input file \"%s\" from %s", configPath, inputUrl)
+
+	resp, err := http.Get(inputUrl)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	defer resp.Body.Close()
+
+	err = os.Remove(configPath)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	out, err := os.Create(configPath)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	_, err = io.Copy(out, resp.Body)
+	if err != nil {
+		log.Println(err)
+		return
+	}
 }
 
 // https://stackoverflow.com/questions/24562942/golang-how-do-i-determine-the-number-of-lines-in-a-file-efficiently
