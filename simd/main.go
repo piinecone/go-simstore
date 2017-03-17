@@ -94,11 +94,8 @@ func main() {
 		log.Println("reloading...")
 
 		inputUrl := r.FormValue("input")
-		_, err := url.ParseRequestURI(inputUrl)
-		if err == nil {
+		if len(inputUrl) > 0 {
 			reloadConfigFromRemote(inputUrl, *input)
-		} else {
-			log.Println("invalid input URL: ", err)
 		}
 
 		status := http.StatusOK
@@ -159,6 +156,12 @@ func main() {
 // supplied as a url query parameter to /reload
 func reloadConfigFromRemote(inputUrl string, configPath string) {
 	log.Printf("> reloading input file \"%s\" from %s", configPath, inputUrl)
+
+	_, err := url.ParseRequestURI(inputUrl)
+	if err != nil {
+		log.Println("invalid input URL: ", err)
+		return
+	}
 
 	resp, err := http.Get(inputUrl)
 	if err != nil {
