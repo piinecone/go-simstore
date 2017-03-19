@@ -88,6 +88,7 @@ func main() {
 
 	if *useVPTree {
 		http.HandleFunc("/topk", func(w http.ResponseWriter, r *http.Request) { topkHandler(w, r) })
+		http.HandleFunc("/topk/multi", func(w http.ResponseWriter, r *http.Request) { topkMultiHandler(w, r) })
 	}
 
 	http.HandleFunc("/reload", func(w http.ResponseWriter, r *http.Request) {
@@ -321,6 +322,86 @@ func loadConfig(input string, useStore bool, storeSize int, small bool, compress
 
 	UpdateConfig(&Config{store: store, vptree: vpt})
 	return nil
+}
+
+type MultiRequest []struct {
+	ID  int    `json:"id"`
+	Sig string `json:"sig"`
+}
+
+type hit struct {
+	ID uint64  `json:"id"`
+	D  float64 `json:"d"`
+}
+
+type MultiResponse struct {
+	RequestID int   `json:"rid"`
+	Matches   []hit `json:"m"`
+}
+
+func topkMultiHandler(w http.ResponseWriter, r *http.Request) {
+	Metrics.Requests.Add(1)
+
+	// error response
+	var (
+		status int
+		err    error
+	)
+
+	defer func() {
+		if nil != err {
+			log.Println(err)
+			http.Error(w, err.Error(), status)
+		}
+	}()
+
+	reqs := MultiRequest{}
+	err = json.NewDecoder(r.Body).Decode(&reqs)
+	if err != nil {
+		status = http.StatusInternalServerError
+		return
+	}
+
+	kstr := r.FormValue("k")
+	if kstr == "" {
+		kstr = "10"
+	}
+
+	k, err := strconv.Atoi(kstr)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	res := make([]MultiResponse, 0)
+
+	for _, req := range reqs {
+		sig64, err := strconv.ParseUint(req.Sig, 16, 64)
+		if err != nil {
+			status = http.StatusBadRequest
+			return
+		}
+
+		vpt := CurrentConfig().vptree
+
+		matches, distances := vpt.Search(sig64, k)
+
+		hits := make([]hit, 0)
+		for i, m := range matches {
+			hits = append(hits, hit{ID: m.ID, D: distances[i]})
+		}
+
+		res = append(
+			res,
+			MultiResponse{
+				RequestID: req.ID,
+				Matches:   hits,
+			},
+		)
+
+	}
+
+	json.NewEncoder(w).Encode(res)
 }
 
 func topkHandler(w http.ResponseWriter, r *http.Request) {
